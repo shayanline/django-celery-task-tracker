@@ -1,0 +1,1040 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static task_humanize %}
+
+{% block title %}{{ opts.verbose_name | capfirst }} task tracker | {{ object }}{% endblock %}
+
+{% block extrahead %}
+
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'celery_task_tracker/css/task_tracker.css' %}">
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        let tooltipEl = null;
+        function createTooltip(text, parent) {
+            if (!tooltipEl) {
+                tooltipEl = document.createElement('div');
+                tooltipEl.className = 'ant-tooltip';
+                tooltipEl.innerHTML = '<span class="ant-tooltip-inner"></span><div class="ant-tooltip-arrow"></div>';
+                document.body.appendChild(tooltipEl);
+            }
+            tooltipEl.querySelector('.ant-tooltip-inner').textContent = text;
+            tooltipEl.classList.add('ant-tooltip-visible');
+            const rect = parent.getBoundingClientRect();
+            const left = rect.left + rect.width / 2 - tooltipEl.offsetWidth / 2;
+            const top = rect.top - tooltipEl.offsetHeight - 8;
+            tooltipEl.style.left = `${Math.max(8, left)}px`;
+            tooltipEl.style.top = `${Math.max(8, top)}px`;
+        }
+        function hideTooltip() {
+            if (tooltipEl) {
+                tooltipEl.classList.remove('ant-tooltip-visible');
+            }
+        }
+        document.body.addEventListener('mouseover', function(e) {
+            const target = e.target.closest('.ant-tooltip-container');
+            if (target && target.dataset.tooltip) {
+                createTooltip(target.dataset.tooltip, target);
+            }
+        });
+        document.body.addEventListener('mouseout', function(e) {
+            const target = e.target.closest('.ant-tooltip-container');
+            if (target && target.dataset.tooltip) {
+                hideTooltip();
+            }
+        });
+    });
+    </script>
+
+        <div class="modal fade" id="taskModal" tabindex="-1" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">Task Details</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="modalContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="confirmModal" tabindex="-1" role="dialog" aria-labelledby="confirmModalTitle" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmModalTitle">Confirm</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body" id="confirmModalBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal" id="confirmCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmOkBtn">Revoke</button>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block breadcrumbs %}
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="{% url opts|admin_urlname:'changelist' %}" class="active">{{ opts.verbose_name_plural|capfirst }}</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="{% url opts|admin_urlname:'change' original.pk %}">{{ original }}</a>
+        </li>
+        <li class="breadcrumb-item active">
+            Task Tracker
+        </li>
+    </ol>
+{% endblock %}
+
+{% block object-tools %}
+<ul class="object-tools">
+    {% if has_change_permission %}
+        <li>
+            {% if opts %}
+                <a href="{% url 'admin:'|add:app_label|add:'_'|add:model_name_lower|add:'_change' object.pk %}" class="changelink">
+                    Change {{ model_name_lower }}
+                </a>
+            {% else %}
+                <span>Change {{ model_name_lower }}</span>
+            {% endif %}
+        </li>
+    {% endif %}
+    <li>
+        {% if opts %}
+            <a href="{% url 'admin:'|add:app_label|add:'_'|add:model_name_lower|add:'_changelist' %}" class="changelink">
+                View all {{ opts.verbose_name_plural|lower }}
+            </a>
+        {% else %}
+            <span>View all {{ model_name_lower }}s</span>
+        {% endif %}
+    </li>
+</ul>
+{% endblock %}
+
+ 
+{% block content %}
+    <div class="task-tracker-container">
+    <div class="task-tracker-layout">
+        <div class="task-history-column">
+            <div class="module">
+                <h2 class="task-tracker-heading task-header-flex">
+                    <div class="task-header-left">
+                        <i class="fa-solid fa-list-check icon-margin" style="color: #417690;"></i>
+                        <span class="task-header-title" title="Task Tracker for {{ object }}">Task Tracker for {{ object }}</span>
+                        <span class="object-id-badge" title="Object ID" aria-label="Object ID">
+                            <i class="fa-solid fa-hashtag" aria-hidden="true"></i>
+                            <span style="font-weight:700;color:inherit;">{{ object.pk }}</span>
+                        </span>
+                    </div>
+                    <div class="auto-refresh-indicator">
+                        <input type="checkbox" id="auto-refresh-toggle" aria-label="Enable auto refresh" checked>
+                        <span class="auto-refresh-text">Auto-refresh every 5s</span>
+                        <span class="refresh-dot"></span>
+                    </div>
+                </h2>
+                <div class="module-content">
+                    <div class="filter-controls">
+                        <div class="filter-item-flex">
+                            <div class="filter-select-container">
+                                <select id="filter-type" class="filter-select-padded" aria-label="Filter tasks or status" style=" position:relative;">
+                                    <option value="none">All Tasks</option>
+                                    <option value="task">By Task</option>
+                                    <option value="state">By Status</option>
+                                </select>
+                                <i class="fa-solid fa-filter filter-select-icon" aria-hidden="true"></i>
+                            </div>
+                            <div id="filter-value-container" style="display: none;">
+                                <select id="filter-value"></select>
+                            </div>
+                        </div>
+                        <div class="pagination-controls" id="pagination-controls">
+                            <div class="pagination-info">&nbsp;</div>
+                            <div class="pagination-nav" aria-label="Pagination navigation"></div>
+                        </div>
+                    </div>
+                    <div class="results" id="results-container">
+                        <table class="results-table" id="task-table">
+                            <colgroup>
+                                <col class="col-id">
+                                <col class="col-task">
+                                <col class="col-status">
+                                <col class="col-created">
+                                <col class="col-updated">
+                                <col class="col-actions">
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th class="col-id"><span class="cell-content"><i class="fa-solid fa-key"></i>Task ID</span></th>
+                                    <th class="col-task"><span class="cell-content"><i class="fa-solid fa-bolt"></i>Task Name</span></th>
+                                    <th class="col-center col-status"><span class="cell-content"><i class="fa-solid fa-signal"></i>Status</span></th>
+                                    <th class="col-created"><span class="cell-content"><i class="fa-regular fa-calendar-plus"></i>Created</span></th>
+                                    <th class="col-updated"><span class="cell-content"><i class="fa-regular fa-calendar-check"></i>Last Updated</span></th>
+                                    <th class="col-center col-actions"><span class="cell-content"><i class="fa-solid fa-gear"></i>Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="task-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="available-tasks-column">
+            <div class="module module-available-tasks">
+                <h2 class="task-tracker-heading"><i class="fa-solid fa-rocket icon-margin-8" style="color: #218838;"></i>Available tasks</h2>
+                <div class="module-content" style="padding: 12px 16px;">
+                    <div class="task-launch-grid" style="border-radius: 8px; padding: 6px 0;">
+                        {% for task in available_tasks %}
+                            <form method="post" action="{{ task_launch_url }}?task={{ task }}" style="margin: 0;">
+                                {% csrf_token %}
+                                <button type="submit" class="task-launch-btn ant-tooltip-container" data-tooltip="{{ task }}">
+                                    <i class="fa-solid fa-play icon-margin" style="color: #218838;"></i>
+                                    <span class="task-name">{{ task|humanize_task_name }}</span>
+                                </button>
+                            </form>
+                        {% empty %}
+                            <div style="text-align: center; color: #999; padding: 20px;">
+                                <i class="fa-regular fa-face-meh-blank" style="font-size: 22px; margin-bottom: 4px;"></i><br>
+                                No tasks available for this model.
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+class TaskTracker {
+    constructor() {
+        // cache loaded tasks by id to avoid extra network requests
+        this.taskCache = new Map();
+        this.currentPage = parseInt(this.getUrlParam('page') || localStorage.getItem('taskTracker_page') || '1');
+        this.currentFilter = this.getUrlParam('filter') || localStorage.getItem('taskTracker_filter') || 'none';
+        this.currentFilterValue = this.getUrlParam('value') || localStorage.getItem('taskTracker_filterValue') || '';
+        this.pageSize = parseInt(this.getUrlParam('page_size') || localStorage.getItem('taskTracker_pageSize') || '10');
+        this.refreshInterval = null;
+        this.isLoading = false;
+        this.autoRefreshEnabled = (localStorage.getItem('taskTracker_autoRefresh') !== 'false');
+        this.init();
+    }
+    
+    getUrlParam(name) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(name);
+    }
+    
+    updateUrl() {
+        const url = new URL(window.location);
+        url.searchParams.set('page', this.currentPage);
+        url.searchParams.set('page_size', this.pageSize);
+        if (this.currentFilter !== 'none' && this.currentFilterValue) {
+            url.searchParams.set('filter', this.currentFilter);
+            url.searchParams.set('value', this.currentFilterValue);
+        } else {
+            url.searchParams.delete('filter');
+            url.searchParams.delete('value');
+        }
+        window.history.replaceState({}, '', url);
+        localStorage.setItem('taskTracker_page', this.currentPage);
+        localStorage.setItem('taskTracker_filter', this.currentFilter);
+        localStorage.setItem('taskTracker_filterValue', this.currentFilterValue);
+        localStorage.setItem('taskTracker_pageSize', this.pageSize);
+        this.updateTaskLaunchForms();
+    }
+
+    init() {
+        this.setupEventListeners();
+        this.restoreFilterState();
+        this.updateTaskLaunchForms();
+        this.loadTasks();
+        if (this.autoRefreshEnabled) this.startAutoRefresh();
+    }
+    
+    restoreFilterState() {
+        document.getElementById('filter-type').value = this.currentFilter;
+        this.updateFilterValueOptions();
+        if (this.currentFilter !== 'none' && this.currentFilterValue) {
+            document.getElementById('filter-value').value = this.currentFilterValue;
+        }
+    }
+
+    setupEventListeners() {
+        const filterType = document.getElementById('filter-type');
+        const filterValue = document.getElementById('filter-value');
+        filterType.addEventListener('change', () => {
+            this.updateFilterValueOptions();
+            if (filterType.value === 'none') {
+                this.currentFilter = 'none';
+                this.currentFilterValue = '';
+                this.currentPage = 1;
+                this.updateUrl();
+                this.loadTasks();
+            }
+        });
+        $(filterType).on('select2:select', () => {
+            this.updateFilterValueOptions();
+            if (filterType.value === 'none') {
+                this.currentFilter = 'none';
+                this.currentFilterValue = '';
+                this.currentPage = 1;
+                this.updateUrl();
+                this.loadTasks();
+            }
+        });
+        filterValue.addEventListener('change', () => {
+            if (document.getElementById('filter-value-container').style.display !== 'none') {
+                const val = filterValue.value;
+                if (val && val !== '') {
+                    this.applyFilter();
+                } else {
+                    this.currentFilterValue = '';
+                    this.currentPage = 1;
+                    this.updateUrl();
+                    localStorage.removeItem('taskTracker_filterValue');
+                    this.loadTasks();
+                }
+            }
+        });
+        $(filterValue).on('select2:select', () => {
+            if (document.getElementById('filter-value-container').style.display !== 'none') {
+                const val = filterValue.value;
+                if (val && val !== '') {
+                    this.applyFilter();
+                } else {
+                    this.currentFilterValue = '';
+                    this.currentPage = 1;
+                    this.updateUrl();
+                    localStorage.removeItem('taskTracker_filterValue');
+                    this.loadTasks();
+                }
+            }
+        });
+        const toggle = document.getElementById('auto-refresh-toggle');
+        if (toggle) {
+            toggle.checked = !!this.autoRefreshEnabled;
+            toggle.addEventListener('change', () => {
+                this.autoRefreshEnabled = toggle.checked;
+                localStorage.setItem('taskTracker_autoRefresh', this.autoRefreshEnabled ? 'true' : 'false');
+                if (this.autoRefreshEnabled) this.startAutoRefresh(); else this.stopAutoRefresh();
+            });
+        }
+        this.updateFilterValueOptions();
+    }
+
+    updateFilterValueOptions() {
+        const filterType = document.getElementById('filter-type').value;
+        const filterValue = document.getElementById('filter-value');
+        const filterValueContainer = document.getElementById('filter-value-container');
+        filterValue.innerHTML = '';
+        filterValueContainer.style.display = filterType === 'none' ? 'none' : 'block';
+        if (filterType === 'task') {
+            const availableTasks = [
+                {% for task in available_tasks %}'{{ task }}'{% if not forloop.last %},{% endif %}{% endfor %}
+            ];
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '-- Select a task --';
+            placeholder.selected = true;
+            placeholder.disabled = false;
+            filterValue.appendChild(placeholder);
+
+            availableTasks.forEach(task => {
+                const option = document.createElement('option');
+                option.value = task;
+                option.textContent = this.humanizeTaskName(task);
+                filterValue.appendChild(option);
+            });
+            if (this.currentFilter === 'task' && this.currentFilterValue) {
+                filterValue.value = this.currentFilterValue;
+            }
+        } else if (filterType === 'state') {
+            const states = [
+                {value: 'Pending', text: 'Pending'},
+                {value: 'Started', text: 'Started'},
+                {value: 'Success', text: 'Success'},
+                {value: 'Failure', text: 'Failure'},
+                {value: 'Revoked', text: 'Revoked'},
+                {value: 'Received', text: 'Received'},
+                {value: 'Rejected', text: 'Rejected'}
+            ];
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '-- Select a status --';
+            placeholder.selected = true;
+            placeholder.disabled = false;
+            filterValue.appendChild(placeholder);
+
+            states.forEach(state => {
+                const option = document.createElement('option');
+                option.value = state.value;
+                option.textContent = state.text;
+                filterValue.appendChild(option);
+            });
+            if (this.currentFilter === 'state' && this.currentFilterValue) {
+                filterValue.value = this.currentFilterValue;
+            }
+        }
+    }
+
+    applyFilter() {
+        const filterType = document.getElementById('filter-type').value;
+        const filterValue = document.getElementById('filter-value').value;
+        this.currentFilter = filterType;
+        this.currentFilterValue = filterType === 'none' ? '' : filterValue;
+        this.currentPage = 1;
+        this.updateUrl();
+        this.loadTasks();
+    }
+
+    loadTasks(isAutoRefresh = false) {
+        if (this.isLoading) return;
+        this.isLoading = true;
+        this.showLoadingState(isAutoRefresh);
+        let url = `{{ task_list_url }}?page=${this.currentPage}&page_size=${this.pageSize}`;
+        if (this.currentFilter !== 'none' && this.currentFilterValue) {
+            url += `&filter=${this.currentFilter}&value=${this.currentFilterValue}`;
+        }
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                const totalPages = Math.ceil(data.total_count / data.page_size);
+                if (this.currentPage > totalPages && totalPages > 0) {
+                    this.currentPage = totalPages;
+                    this.updateUrl();
+                    this.loadTasks();
+                    return;
+                }
+                this.updateTaskTable(data.tasks);
+                this.updatePagination(data);
+            })
+            .catch(error => {
+                console.error('Error loading tasks:', error);
+                this.showErrorMessage('Failed to load tasks');
+            })
+            .finally(() => {
+                this.isLoading = false;
+                this.hideLoadingState();
+            });
+    }
+
+    showLoadingState(isAutoRefresh = false) {
+        if (isAutoRefresh) {
+            const indicator = document.querySelector('.auto-refresh-indicator .refresh-dot');
+            if (indicator) {
+                indicator.style.animation = 'pulse 0.5s ease-in-out';
+            }
+            return;
+        }
+        let overlay = document.getElementById('table-loading-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'table-loading-overlay';
+            overlay.className = 'loading-overlay';
+            overlay.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px; color: #666;">
+                    <div class="loading-spinner"></div>
+                    Loading tasks...
+                </div>
+            `;
+            const resultsContainer = document.getElementById('results-container');
+            resultsContainer.style.position = 'relative';
+            resultsContainer.appendChild(overlay);
+        }
+        overlay.style.display = 'flex';
+    }
+    
+    hideLoadingState() {
+        const overlay = document.getElementById('table-loading-overlay');
+        if (overlay) {
+            overlay.style.display = 'none';
+        }
+    }
+
+    updateTaskTable(tasks) {
+        const tbody = document.getElementById('task-table-body');
+        if (!tasks || tasks.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px; color: #999;">
+                        No tasks found matching the current filter.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        tbody.innerHTML = '';
+
+        try {
+            this.taskCache.clear();
+            tasks.forEach(t => this.taskCache.set(String(t.id), t));
+        } catch (e) {
+            console.warn('Failed to populate task cache', e);
+        }
+
+        const statusTooltips = {
+            'Pending': 'The task is dispatched and waiting for a worker.',
+            'Received': 'The task is received by a worker and waiting to be executed.',
+            'Started': 'The task execution has started.',
+            'Revoked': 'The task was revoked.',
+            'Rejected': 'The task was rejected by the worker.',
+            'Success': 'The task executed successfully.',
+            'Failure': 'The task execution failed.'
+        };
+        const statusIcons = {
+            'Pending': '<i class="fa-regular fa-clock" style="color:#b38600;"></i>',
+            'Received': '<i class="fa-solid fa-inbox" style="color:#b38600;"></i>',
+            'Started': '<i class="fa-solid fa-spinner fa-spin" style="color:#0077b6;"></i>',
+            'Success': '<i class="fa-solid fa-circle-check" style="color:#218838;"></i>',
+            'Failure': '<i class="fa-solid fa-circle-xmark" style="color:#c82333;"></i>',
+            'Revoked': '<i class="fa-solid fa-ban" style="color:#7b1fa2;"></i>',
+            'Rejected': '<i class="fa-solid fa-thumbs-down" style="color:#b85c00;"></i>'
+        };
+        tasks.forEach(task => {
+            const row = document.createElement('tr');
+            let displayState = (task.state === 'REJECTED') ? 'Rejected' : task.state;
+            const statusClass = this.getStatusClass(displayState);
+            let actions = this.getTaskActions({...task, state: displayState}) || '';
+            const humanTaskName = this.humanizeTaskName(task.name);
+            let tooltip = statusTooltips[displayState] || '';
+            let icon = statusIcons[displayState] || '';
+            row.innerHTML = `
+                <td class="col-id">
+                    <div class="cell-content" style="display:flex;align-items:center;gap:8px;">
+                        <span class="task-id ant-tooltip-container" data-tooltip="${task.id}" title="${task.id}">${this.truncateText(task.id, 8)}</span>
+                        <button class="copy-btn ant-tooltip-container" data-tooltip="Copy task id" title="Copy task ID" aria-label="Copy full task id" onclick='taskTracker.copyTaskId(${JSON.stringify(task.id)}, this)'>
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                    </div>
+                </td>
+                <td class="col-task">
+                    <div class="cell-content">
+                        <span class="task-name ant-tooltip-container" data-tooltip="${task.name}" title="${task.name}">${humanTaskName}</span>
+                    </div>
+                </td>
+                <td class="col-center col-status">
+                    <div class="cell-content">
+                        <span class="status-badge ${statusClass} ant-tooltip-container" data-tooltip="${tooltip}">${icon} ${displayState}</span>
+                    </div>
+                </td>
+                <td class="col-created">
+                    <div class="cell-content"><span class="timestamp">${task.created_at}</span></div>
+                </td>
+                <td class="col-updated">
+                    <div class="cell-content"><span class="timestamp">${task.updated_at}</span></div>
+                </td>
+                <td class="col-center col-actions">
+                    <div class="cell-content">${actions}</div>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    }
+
+    humanizeTaskName(name) {
+        if (name.includes('.')) {
+            name = name.split('.').pop();
+        }
+        name = name.replace(/_/g, ' ');
+        name = name.replace(/([a-z])([A-Z])/g, '$1 $2');
+        name = name.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        return name;
+    }
+    
+    getStatusClass(state) {
+        const classes = {
+            'Pending': 'status-pending',
+            'Started': 'status-started', 
+            'Success': 'status-success',
+            'Failure': 'status-failure',
+            'Revoked': 'status-revoked',
+            'Received': 'status-pending',
+            'Rejected': 'status-rejected'
+        };
+        return classes[state] || 'status-pending';
+    }
+    
+    getTaskActions(task) {
+        let kind, text, cls, icon;
+        switch (task.state) {
+            case 'Success':
+                kind = 'result'; text = 'Result'; cls = 'btn-view-result'; icon = '<i class="fa-solid fa-eye" style="margin-right:6px;"></i>'; break;
+            case 'Failure':
+                kind = 'error'; text = 'Error'; cls = 'btn-view-error'; icon = '<i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i>'; break;
+            case 'Rejected':
+                kind = 'reason'; text = 'Reason'; cls = 'btn-view-reason'; icon = '<i class="fa-solid fa-comment-dots" style="margin-right:6px;"></i>'; break;
+            case 'Pending':
+            case 'Started':
+            case 'Received':
+                kind = 'revoke';
+                if (task.revoke_requested) {
+                    text = 'Revoking...'; icon = '<i class="fa-solid fa-hourglass-end" style="margin-right:6px;"></i>';
+                } else {
+                    text = 'Revoke'; icon = '<i class="fa-solid fa-hand-paper" style="margin-right:6px;"></i>';
+                }
+                cls = 'btn-revoke';
+                break;
+            default:
+                return '';
+        }
+        const disabled = (kind === 'revoke' && task.revoke_requested) ? 'disabled style="opacity:0.6;"' : '';
+        return `<button class="action-btn ${cls}" id="action-btn-${task.id}" ${disabled} onclick="taskTracker.performAction('${task.id}','${kind}')">${icon}${text}</button>`;
+    }
+    
+    truncateText(text, maxLength) {
+        return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    }
+
+    async copyTaskId(taskId, btnEl) {
+        try {
+            const text = String(taskId);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'absolute';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            if (btnEl) {
+                const origHTML = btnEl.innerHTML;
+                btnEl.innerHTML = '<i class="fa-solid fa-check" style="color:#218838"></i>';
+                btnEl.disabled = true;
+                setTimeout(() => {
+                    btnEl.innerHTML = origHTML;
+                    btnEl.disabled = false;
+                }, 1500);
+            }
+            this.showSuccessMessage('Task id copied to clipboard');
+        } catch (err) {
+            console.error('Copy failed', err);
+            this.showErrorMessage('Unable to copy task id');
+        }
+    }
+
+    updatePagination(data) {
+        const controls = document.getElementById('pagination-controls');
+        const info = controls.querySelector('.pagination-info');
+        const nav = controls.querySelector('.pagination-nav');
+        const pageSize = data.page_size || this.pageSize;
+        info.textContent = `${data.total_count} tasks`;
+        const totalPages = Math.ceil((data.total_count || 0) / (pageSize || 1));
+        nav.innerHTML = '';
+        const currentPage = data.page;
+        if (data.has_previous) {
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'pagination-btn';
+            prevBtn.setAttribute('aria-label', 'Previous page');
+            prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+            prevBtn.onclick = () => this.changePage(currentPage - 1);
+            nav.appendChild(prevBtn);
+        }
+        const maxVisible = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+        if (endPage - startPage < maxVisible - 1) {
+            startPage = Math.max(1, endPage - maxVisible + 1);
+        }
+        if (startPage > 1) {
+            this.addPageButton(nav, 1, currentPage);
+            if (startPage > 2) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'pagination-ellipsis';
+                ellipsis.textContent = '...';
+                nav.appendChild(ellipsis);
+            }
+        }
+        for (let i = startPage; i <= endPage; i++) {
+            this.addPageButton(nav, i, currentPage);
+        }
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'pagination-ellipsis';
+                ellipsis.textContent = '...';
+                nav.appendChild(ellipsis);
+            }
+            this.addPageButton(nav, totalPages, currentPage);
+        }
+        if (data.has_next) {
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'pagination-btn';
+            nextBtn.setAttribute('aria-label', 'Next page');
+            nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+            nextBtn.onclick = () => this.changePage(currentPage + 1);
+            nav.appendChild(nextBtn);
+        }
+    }
+    
+    addPageButton(nav, pageNum, currentPage) {
+        const pageBtn = document.createElement('button');
+        pageBtn.className = 'pagination-btn';
+        pageBtn.setAttribute('aria-label', `Page ${pageNum}`);
+    pageBtn.textContent = pageNum;
+        if (pageNum === currentPage) {
+            pageBtn.classList.add('active');
+        }
+        pageBtn.onclick = () => this.changePage(pageNum);
+        nav.appendChild(pageBtn);
+    }
+    
+    changePage(page) {
+        if (page < 1) {
+            page = 1;
+        }
+        this.currentPage = page;
+        this.updateUrl();
+        this.loadTasks();
+    }
+
+    async revokeTask(taskId) {
+        const confirmed = await showConfirmModal('Revoke task', 'Are you sure you want to revoke this task?');
+        if (!confirmed) return;
+
+        const btn = document.getElementById(`action-btn-${taskId}`);
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-hourglass-end" style="margin-right:6px;"></i>Revoking...';
+            btn.style.opacity = '0.6';
+        }
+
+        const url = `{{ task_revoke_url }}`;
+        try {
+            const formData = new FormData();
+            formData.append('task_id', taskId);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                },
+                body: formData
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to revoke task');
+            }
+            this.loadTasks();
+            this.showSuccessMessage('Revoke requested');
+        } catch (error) {
+            this.showErrorMessage(error.message || 'Failed to revoke task');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-hand-paper" style="margin-right:6px;"></i>Revoke';
+                btn.style.opacity = '1';
+            }
+        }
+    }
+
+    performAction(taskId, kind) {
+        console.warn('Performing action', kind, 'on task', taskId);
+        if (kind === 'revoke') {
+            this.revokeTask(taskId);
+        } else {
+            this.viewTask(taskId);
+        }
+    }
+    
+    viewTask(taskId) {
+        const buttonId = `action-btn-${taskId}`;
+        const button = document.getElementById(buttonId);
+        this.setButtonLoading(button, true);
+
+        try {
+            const task = this.taskCache.get(String(taskId));
+            if (!task) {
+                // fallback: if cache missing, show a generic info modal
+                this.showErrorMessage('Task details are not available in the current view.');
+                return;
+            }
+            // Use only `task.result` (expected to be a string). If it's not a string,
+            // stringify it so it displays reasonably.
+            let payload = task.result;
+            // treat falsy payload (undefined / null / empty string) as missing
+            if (!payload) {
+                // nothing to show as result — show full task info
+                showModal(`Task Info - ${taskId}`, JSON.stringify(task, null, 2), 'info');
+                return;
+            }
+            if (typeof payload !== 'string') {
+                try {
+                    payload = JSON.stringify(payload, null, 2);
+                } catch (e) {
+                    payload = String(payload);
+                }
+            }
+
+            // Choose modal style based on state
+            const state = task.state || '';
+            if (state === 'Success') {
+                showModal(`Task Result - ${taskId}`, payload, 'result');
+            } else if (state === 'Failure') {
+                showModal(`Task Error - ${taskId}`, payload, 'error');
+            } else if (state === 'Rejected') {
+                showModal(`Task Reason - ${taskId}`, payload, 'reason');
+            } else {
+                // default: show as info
+                showModal(`Task Details - ${taskId}`, payload, 'info');
+            }
+        } catch (err) {
+            console.error('Error rendering task from cache', err);
+            this.showErrorMessage('Unable to display task details');
+        } finally {
+            this.setButtonLoading(button, false);
+        }
+    }
+    
+    updateTaskLaunchForms() {
+        document.querySelectorAll('.task-launch-grid form').forEach(form => {
+            const url = new URL(form.action);
+            url.searchParams.delete('page');
+            url.searchParams.delete('filter');
+            url.searchParams.delete('value');
+            url.searchParams.delete('page_size');
+            if (this.currentPage > 1) {
+                url.searchParams.set('page', this.currentPage);
+            }
+            if (this.currentFilter !== 'none' && this.currentFilterValue) {
+                url.searchParams.set('filter', this.currentFilter);
+                url.searchParams.set('value', this.currentFilterValue);
+            }
+            if (this.pageSize) {
+                url.searchParams.set('page_size', this.pageSize);
+            }
+            form.action = url.toString();
+        });
+    }
+    
+    setButtonLoading(button, isLoading) {
+        if (!button) return;
+        
+        if (isLoading) {
+            button.disabled = true;
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>Loading...';
+            button.style.opacity = '0.7';
+        } else {
+            button.disabled = false;
+            button.innerHTML = button.dataset.originalText || button.innerHTML;
+            button.style.opacity = '1';
+        }
+    }
+    
+    showSuccessMessage(message) {
+        this.showMessage(message, 'success');
+    }
+    
+    showErrorMessage(message) {
+        this.showMessage(message, 'error');
+    }
+    
+    
+    showMessage(message, type) {
+        let container = document.getElementById('notification-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'notification-container';
+            container.setAttribute('aria-live', 'polite');
+            container.setAttribute('aria-atomic', 'false');
+            document.body.appendChild(container);
+        }
+
+        const notification = document.createElement('div');
+        notification.className = 'task-tracker-notification';
+        notification.setAttribute('role', 'status');
+        notification.setAttribute('tabindex', '0');
+
+        const colors = {success:'#4caf50',error:'#f44336',info:'#2196f3'};
+        const bg = colors[type] || colors.info;
+
+    notification.classList.add('task-tracker-notification');
+    if (type === 'success') notification.classList.add('notification-success');
+    else if (type === 'error') notification.classList.add('notification-error');
+    else notification.classList.add('notification-info');
+
+        const icon = document.createElement('span');
+        icon.className = 'notification-icon';
+        if (type === 'success') icon.innerHTML = '<i class="fa-solid fa-circle-check" aria-hidden="true"></i>';
+        else if (type === 'error') icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>';
+        else icon.innerHTML = '<i class="fa-solid fa-info-circle" aria-hidden="true"></i>';
+
+        const text = document.createElement('div');
+        text.className = 'notification-text';
+        text.textContent = message;
+
+        const actions = document.createElement('div');
+        actions.className = 'notification-actions';
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.className = 'notification-dismiss';
+        dismissBtn.setAttribute('aria-label', 'Dismiss notification');
+        dismissBtn.innerHTML = '&times;';
+
+        actions.appendChild(dismissBtn);
+
+        notification.appendChild(icon);
+        notification.appendChild(text);
+        notification.appendChild(actions);
+
+        container.appendChild(notification);
+
+        const DURATION = 3000; // 3 seconds
+        let removed = false;
+        let start = Date.now();
+        let remaining = DURATION;
+        let timer = setTimeout(remove, remaining);
+
+        function remove() {
+            if (removed) return;
+            removed = true;
+            notification.classList.add('notification-removing');
+            setTimeout(() => {
+                if (notification.parentNode) notification.parentNode.removeChild(notification);
+                if (container && container.children.length === 0 && container.parentNode) container.parentNode.removeChild(container);
+            }, 220);
+        }
+
+        function pauseTimer() {
+            if (removed) return;
+            clearTimeout(timer);
+            remaining -= (Date.now() - start);
+        }
+
+        function resumeTimer() {
+            if (removed) return;
+            start = Date.now();
+            clearTimeout(timer);
+            timer = setTimeout(remove, remaining);
+        }
+
+        notification.addEventListener('mouseenter', pauseTimer);
+        notification.addEventListener('mouseleave', resumeTimer);
+        notification.addEventListener('focusin', pauseTimer);
+        notification.addEventListener('focusout', resumeTimer);
+        dismissBtn.addEventListener('click', () => {
+            clearTimeout(timer);
+            remove();
+        });
+
+        notification.setAttribute('aria-live', 'polite');
+        // trigger entrance animation via CSS class
+        requestAnimationFrame(() => notification.classList.add('show'));
+    }
+    
+    startAutoRefresh() {
+        if (this.refreshInterval) return;
+        const indicator = document.querySelector('.auto-refresh-indicator .refresh-dot');
+        if (indicator) indicator.style.opacity = '1';
+        this.refreshInterval = setInterval(() => {
+            if (!this.isLoading) this.loadTasks(true);
+        }, 5000);
+    }
+    
+    stopAutoRefresh() {
+        if (!this.refreshInterval) return;
+        clearInterval(this.refreshInterval);
+        this.refreshInterval = null;
+        const indicator = document.querySelector('.auto-refresh-indicator .refresh-dot');
+        if (indicator) indicator.style.opacity = '0.25';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    window.taskTracker = new TaskTracker();
+    document.querySelectorAll('.task-launch-grid form').forEach(form => {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = form.querySelector('button[type=submit]');
+            if (btn) {
+                btn.disabled = true;
+                btn.dataset.orig = btn.innerHTML;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>Launching...';
+            }
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    const msg = data.error || data.message || 'Failed to launch task';
+                    window.taskTracker.showErrorMessage(msg);
+                } else {
+                    const msg = data.message || 'Task launched';
+                    window.taskTracker.showSuccessMessage(msg);
+                    window.taskTracker.loadTasks();
+                }
+            } catch (err) {
+                window.taskTracker.showErrorMessage(err.message || 'Failed to launch task');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = btn.dataset.orig || btn.innerHTML;
+                }
+            }
+        });
+    });
+});
+
+function showModal(title, content, type = 'info') {
+    const modalTitle = document.getElementById('modalTitle');
+    const modalContent = document.getElementById('modalContent');
+    let iconHtml = '';
+    if (type === 'error') {
+        iconHtml = '<i class="fa-solid fa-triangle-exclamation text-danger mr-2" aria-hidden="true"></i>';
+    } else if (type === 'result' || type === 'success') {
+        iconHtml = '<i class="fa-solid fa-circle-check text-success mr-2" aria-hidden="true"></i>';
+    } else if (type === 'reason') {
+        iconHtml = '<i class="fa-solid fa-comment-dots text-muted mr-2" aria-hidden="true"></i>';
+    }
+    modalTitle.innerHTML = `${iconHtml}${title}`;
+    modalContent.innerHTML = `<pre style="white-space: pre-wrap; word-break: break-word;">${content}</pre>`;
+    $('#taskModal').modal('show');
+}
+
+function closeModal() {
+    $('#taskModal').modal('hide');
+}
+
+function showConfirmModal(title, message) {
+    return new Promise((resolve) => {
+        document.getElementById('confirmModalTitle').textContent = title;
+        document.getElementById('confirmModalBody').innerHTML = message;
+        
+        $('#confirmModal').modal('show');
+        
+        $('#confirmOkBtn').off('click').on('click', function() {
+            $('#confirmModal').modal('hide');
+            resolve(true);
+        });
+        
+        $('#confirmCancelBtn').off('click').on('click', function() {
+            $('#confirmModal').modal('hide');
+            resolve(false);
+        });
+    });
+}
+
+</script>
+{% endblock %}
