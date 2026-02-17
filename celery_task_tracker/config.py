@@ -9,6 +9,8 @@ def load_setting(setting_name, default_value):
     - The setting is not defined in settings
     - The setting is defined but has None value
     """
+    if not settings.configured:
+        return default_value
     value = getattr(settings, setting_name, default_value)
     return default_value if value is None else value
 

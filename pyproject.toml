@@ -1,16 +1,16 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "django-celery-tracker"
+name = "django-celery-task-tracker"
 version = "1.0.0"
 description = "Real-time Celery task tracking for Django Admin, backed by Redis."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [
-    {name = "Elay", email = "dev@elay.io"},
+    {name = "shayanline", email = "sh.khaksar95@gmail.com"},
 ]
 keywords = ["django", "celery", "task", "tracker", "admin", "redis"]
 classifiers = [
@@ -38,22 +38,32 @@ dependencies = [
     "redis>=4.0",
 ]
 
-[project.urls]
-Homepage = "https://github.com/shayanline/django-celery-tracker"
-Repository = "https://github.com/shayanline/django-celery-tracker"
-Issues = "https://github.com/shayanline/django-celery-tracker/issues"
-
-[tool.setuptools.packages.find]
-include = ["celery_task_tracker*"]
-
-[tool.setuptools.package-data]
-celery_task_tracker = [
-    "templates/**/*.html",
-    "static/**/*.css",
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
 ]
 
+[project.urls]
+Homepage = "https://github.com/shayanline/django-celery-task-tracker"
+Repository = "https://github.com/shayanline/django-celery-task-tracker"
+Issues = "https://github.com/shayanline/django-celery-task-tracker/issues"
+
+[tool.hatch.build]
+include = [
+    "celery_task_tracker/templates/**",
+    "celery_task_tracker/static/**",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["celery_task_tracker"]
+
 [tool.ruff]
-line-length = 120
+target-version = "py314"
 
 [tool.ruff.lint]
 extend-select = ["I", "N"]
+
+[tool.pytest.ini_options]
+testpaths = ["celery_task_tracker/tests"]

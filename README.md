@@ -1,4 +1,4 @@
-# django-celery-tracker
+# django-celery-task-tracker
 
 Per-instance Celery task tracking for Django models, built into the admin.
 
@@ -10,7 +10,7 @@ Per-instance Celery task tracking for Django models, built into the admin.
 
 ## The Problem
 
-Django projects that use Celery often end up with background tasks tied to specific model instances — processing an order, generating a report, syncing a record. When something goes wrong, the only way to find out is to dig through Celery logs, check Flower, or query your result backend manually. There's no built-in way to look at a model instance in the admin and see what tasks ran against it, whether they succeeded, or what went wrong.
+Django projects that use Celery often end up with background tasks tied to specific model instances e.g. processing an order, generating a report, fetching a record. When something goes wrong, the only way to find out is to dig through Celery logs, check Flower, or query your result backend manually. There's no built in way to look at a model instance in the admin and see what tasks ran against it, whether they succeeded, or what went wrong.
 
 This library solves that.
 
@@ -31,7 +31,7 @@ You register Celery tasks against Django models. From that point on, every time 
 
 The core idea: every Celery task you register is associated with a Django model. When the task runs, the library figures out which model instance it belongs to (using the task arguments) and stores the task record under that instance's ID in Redis.
 
-For example, if you register a task against `Order` and call it with `order_id=1042`, the library stores that task under `Order #1042`. When you open Order #1042 in the admin and click "Task Tracker", you see only the tasks that ran for that specific order — not all orders, just that one.
+For example, if you register a task against `Order` and call it with `order_id=1042`, the library stores that task under `Order #1042`. When you open Order #1042 in the admin and click "Task Tracker", you see only the tasks that ran for that specific order, not all orders, just that one.
 
 This works through Celery signals. The library listens to `after_task_publish`, `task_prerun`, `task_success`, `task_failure`, and `task_revoked`. Each signal updates the task record in Redis, so the dashboard always reflects the current state.
 
@@ -45,24 +45,24 @@ This works through Celery signals. The library listens to `after_task_publish`, 
 
 ![Admin Button](docs/screenshots/admin-button.png)
 
-*The "Task Tracker" button is automatically injected into the admin for any model you register tasks against.*
+_The "Task Tracker" button is automatically injected into the admin for any model you register tasks against._
 
 ---
 
 ## Installation
 
 ```bash
-pip install django-celery-tracker
+pip install django-celery-task-tracker
 ```
 
 ### Requirements
 
-| Dependency | Version  |
-|------------|----------|
-| Python     | >= 3.10  |
-| Django     | >= 4.2   |
-| Celery     | >= 5.0   |
-| Redis      | >= 4.0   |
+| Dependency | Version |
+| ---------- | ------- |
+| Python     | >= 3.9 |
+| Django     | >= 4.2  |
+| Celery     | >= 5.0  |
+| Redis      | >= 4.0  |
 
 ---
 
@@ -78,7 +78,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-### 2. Set the Redis URL (optional)
+### 2. Set the Redis URL
 
 By default it connects to `redis://`. Override it in your Django settings:
 
@@ -131,13 +131,13 @@ Here the library uses `account_id` and `reference` to look up the `Order` instan
 
 **Parameters:**
 
-| Parameter       | Type                    | Description                                                                 |
-|-----------------|-------------------------|-----------------------------------------------------------------------------|
-| `model_class`   | Django Model class      | The model to associate the task with.                                       |
+| Parameter       | Type                              | Description                                                                                                                                                                                                                           |
+| --------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model_class`   | Django Model class                | The model to associate the task with.                                                                                                                                                                                                 |
 | `id_query`      | `str`, `tuple`, `dict`, or `None` | How to resolve the model instance ID from task arguments. `None` means use the first positional arg as PK. A string names a specific kwarg. A tuple/list of field names triggers a DB lookup. A dict maps lookup fields to arg names. |
-| `launch_args`   | `tuple` or `None`       | Positional args to pass when launching the task from the admin. Use `FromModel("field")` to pull values from the model instance. |
-| `launch_kwargs` | `dict` or `None`        | Keyword args for the task launch. Same `FromModel` support.                 |
-| `hidden`        | `bool`                  | If `True`, the task is tracked but won't appear in the "Available Tasks" panel. |
+| `launch_args`   | `tuple` or `None`                 | Positional args to pass when launching the task from the admin. Use `FromModel("field")` to pull values from the model instance.                                                                                                      |
+| `launch_kwargs` | `dict` or `None`                  | Keyword args for the task launch. Same `FromModel` support.                                                                                                                                                                           |
+| `hidden`        | `bool`                            | If `True`, the task is tracked but won't appear in the "Available Tasks" panel.                                                                                                                                                       |
 
 ### `FromModel`
 
@@ -161,7 +161,7 @@ def restock_product(warehouse_id, product_id):
 
 This task will appear in the tracker for both the `Warehouse` instance and the `Product` instance.
 
-### Hidden tasks
+### Disable Launch
 
 If a task should be tracked but not shown in the "Available Tasks" launch panel:
 
@@ -180,14 +180,14 @@ The library automatically patches the Django Admin for any model you register ta
 
 What you get:
 
-- **Task history table** — Task ID, name, status badge, created/updated timestamps, and action buttons.
-- **Available Tasks panel** — One-click launch for all registered (non-hidden) tasks for that instance.
-- **Filtering** — Filter by task name or status.
-- **Pagination** — Configurable page size.
-- **Auto-refresh** — Polls every 5 seconds (toggleable).
-- **Copy task ID** — Click to copy the full Celery task ID.
-- **View result/error** — Modal with the task result or full error traceback.
-- **Revoke** — Cancel pending or running tasks.
+- **Task history table**: Task ID, name, status badge, created/updated timestamps, and action buttons.
+- **Available Tasks panel**: One-click launch for all registered (non-hidden) tasks for that instance.
+- **Filtering**: Filter by task name or status.
+- **Pagination**: Configurable page size.
+- **Auto-refresh**: Polls every 5 seconds (toggleable).
+- **Copy task ID**: Click to copy the full Celery task ID.
+- **View result/error**: Modal with the task result or full error traceback.
+- **Revoke**: Cancel pending or running tasks.
 
 ---
 
@@ -195,12 +195,12 @@ What you get:
 
 All settings are optional. Add them to your Django `settings.py`:
 
-| Setting                          | Default      | Description                              |
-|----------------------------------|--------------|------------------------------------------|
-| `CELERY_TASKTRACKER_REDIS_URL`   | `"redis://"`  | Redis connection URL.                    |
-| `TASK_TRACKER_RETENTION_WINDOW`  | `86400`       | How long task records live in Redis (seconds). Default: 24 hours. |
-| `TASK_TRACKER_PAGE_SIZE`         | `10`          | Number of tasks per page in the dashboard. |
-| `TASK_TRACKER_MAX_PAGE_SIZE`     | `200`         | Maximum allowed page size.               |
+| Setting                         | Default      | Description                                                       |
+| ------------------------------- | ------------ | ----------------------------------------------------------------- |
+| `CELERY_TASKTRACKER_REDIS_URL`  | `"redis://"` | Redis connection URL.                                             |
+| `TASK_TRACKER_RETENTION_WINDOW` | `86400`      | How long task records live in Redis (seconds). Default: 24 hours. |
+| `TASK_TRACKER_PAGE_SIZE`        | `10`         | Number of tasks per page in the dashboard.                        |
+| `TASK_TRACKER_MAX_PAGE_SIZE`    | `200`        | Maximum allowed page size.                                        |
 
 ---
 
@@ -209,7 +209,7 @@ All settings are optional. Add them to your Django `settings.py`:
 ```
 celery_task_tracker/
 ├── __init__.py          # Public API: task_tracker, TaskTrackerConfig, FromModel
-├── apps.py              # Django AppConfig — auto-discovers tasks.py in installed apps
+├── apps.py              # Django AppConfig: auto-discovers tasks.py in installed apps
 ├── config.py            # Reads settings from Django settings
 ├── tracker.py           # Main orchestrator (singleton)
 ├── task_tracker.py      # Singleton instance
@@ -223,17 +223,17 @@ celery_task_tracker/
 │   └── task_humanize.py # Template filter for task name display
 ├── templates/           # Admin templates
 ├── static/              # CSS
-├── migrations/          # Empty — no database models
+├── migrations/          # Empty: no database models
 └── tests/
     └── test_signals.py
 ```
 
 ### Redis key structure
 
-- `<task_id>` — Hash with task fields (id, name, state, objects, created_at, updated_at, result).
-- `<model_label>:<object_id>:tasks` — Sorted set of all task IDs for that instance.
-- `<model_label>:<object_id>:state:<State>` — Sorted set filtered by state.
-- `<model_label>:<object_id>:task:<task_name>` — Sorted set filtered by task name.
+- `<task_id>`: Hash with task fields (id, name, state, objects, created_at, updated_at, result).
+- `<model_label>:<object_id>:tasks`: Sorted set of all task IDs for that instance.
+- `<model_label>:<object_id>:state:<State>`: Sorted set filtered by state.
+- `<model_label>:<object_id>:task:<task_name>`: Sorted set filtered by task name.
 
 All keys expire according to `TASK_TRACKER_RETENTION_WINDOW`.
 
@@ -248,7 +248,7 @@ The included GitHub Actions workflow (`.github/workflows/publish.yml`) publishes
 1. Go to your GitHub repo **Settings > Environments** and create an environment called `pypi`.
 2. Go to [PyPI](https://pypi.org) and create a new project. Under **Publishing**, add a Trusted Publisher with:
    - Owner: your GitHub org/user
-   - Repository: `django-celery-tracker`
+   - Repository: `django-celery-task-tracker`
    - Workflow: `publish.yml`
    - Environment: `pypi`
 3. Create a GitHub release (tag it `v1.0.0`). The workflow builds and publishes to PyPI automatically.
@@ -265,8 +265,9 @@ The included GitHub Actions workflow (`.github/workflows/publish.yml`) publishes
 If you already have `celery_task_tracker` as a local module inside your project, here's how to switch to the published package:
 
 1. Install the package:
+
    ```bash
-   pip install django-celery-tracker
+    pip install django-celery-task-tracker
    ```
 
 2. Delete the local `celery_task_tracker/` directory from your project.
@@ -274,6 +275,7 @@ If you already have `celery_task_tracker` as a local module inside your project,
 3. Make sure `"celery_task_tracker"` is still in your `INSTALLED_APPS`.
 
 4. All imports stay the same:
+
    ```python
    from celery_task_tracker import task_tracker, FromModel
    ```
