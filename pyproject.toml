@@ -52,12 +52,12 @@ Issues = "https://github.com/shayanline/django-celery-task-tracker/issues"
 
 [tool.hatch.build]
 include = [
-    "celery_task_tracker/templates/**",
-    "celery_task_tracker/static/**",
+    "src/celery_task_tracker/templates/**",
+    "src/celery_task_tracker/static/**",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["celery_task_tracker"]
+packages = ["src/celery_task_tracker"]
 
 [tool.ruff]
 target-version = "py314"
@@ -66,4 +66,4 @@ target-version = "py314"
 extend-select = ["I", "N"]
 
 [tool.pytest.ini_options]
-testpaths = ["celery_task_tracker/tests"]
+testpaths = ["src/celery_task_tracker/tests"]
